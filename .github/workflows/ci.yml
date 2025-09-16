@@ -1,10 +1,14 @@
 name: CI
 on:
- push:
-   branches: [ main, develop, ci-pipeline-poc ]
- pull_request:
-   branches: [ main, develop ]
- workflow_dispatch:
+ workflow_call:        # habilita que lo llamen otros repos
+   inputs:
+     run_tests:
+       type: boolean
+       required: false
+       default: true
+   secrets:
+     MS_NAME:
+       required: false
 jobs:
  build-test:
    runs-on: ubuntu-latest
@@ -23,17 +27,16 @@ jobs:
          cache: gradle
      - name: Setup Gradle
        uses: gradle/actions/setup-gradle@v3
-     - name: Access Repository Variable
-       run: echo "Repository Variable Value ${{ vars.MS_NAME }}"
-     # 🔧 Normaliza EOL a LF y asegura permisos
+     - name: Access Repository Secrets Variable
+       run: echo "Repository Variable Value = ${{ secrets.MS_NAME }}"
      - name: Prepare gradlew
        run: |
          sed -i 's/\r$//' gradlew
          chmod +x gradlew
          ls -l gradlew
          head -n1 gradlew
-     # 🚀 Ejecuta con bash (evita problemas de permisos)
      - name: Build & Test
+       if: ${{ inputs.run_tests }}
        run: bash ./gradlew clean build --no-daemon
      - name: Upload test reports
        if: always()
@@ -51,5 +54,3 @@ jobs:
          name: app-jars
          path: |
            **/build/libs/*.jar
-
-           echo "Repository Variable Value: ${{ vars.MY_VARIABLE }}
