@@ -1,0 +1,11 @@
+name: Sonar Qube
+on:
+ workflow_call:        # habilita que lo llamen otros repos
+jobs:
+  sonarQube:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Access Repository Secrets Variable
+        run: echo "ejecucion Sonar Repository ${{ vars.MS_NAME }}"
