@@ -2,14 +2,14 @@ name: CICD Harbor
 on:
  workflow_call:
 jobs:
-  build:
-    uses: devfrensh/cicd-templates/.github/workflows/npm.yml@main
-    secrets: inherit
-  sonar:
-    uses: devfrensh/cicd-templates/.github/workflows/sonar.yml@main
-    secrets: inherit
-    needs: build
-  registry:
-    uses: devfrensh/cicd-templates/.github/workflows/registryGhcr.yml@main
-    secrets: inherit
-    needs: sonar
+ build:
+   uses: ./.github/workflows/npm.yml
+   secrets: inherit
+ sonar:
+   uses: ./.github/workflows/sonar.yml
+   secrets: inherit
+   needs: build
+ registry:
+   uses: ./.github/workflows/registryGhcr.yml
+   secrets: inherit
+   needs: sonar
