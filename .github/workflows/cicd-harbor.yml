@@ -1,35 +1,15 @@
 name: CICD Harbor
 on:
  workflow_call:
-   inputs:
-     image:
-       type: string
-       required: true
-     repo:                 # <- ya lo declaraste aquí
-       type: string
-       required: true
- push:
-   branches: [ 'feature/*', develop, staging, main ]
- pull_request:
-   branches: [ develop ]
- workflow_dispatch:
-   branches: [ main, develop, staging ]
 jobs:
- build:
-   uses: devfrensh/cicd-templates/.github/workflows/npm.yml@main
-   secrets: inherit
- sonar:
-   needs: build
-   uses: devfrensh/cicd-templates/.github/workflows/sonar.yml@main
-   secrets: inherit
- registry:
-   needs: sonar
-   permissions:
-     contents: read
-     packages: write
-   uses: devfrensh/cicd-templates/.github/workflows/registryGhcr.yml@main
-   with:
-     image: ghcr.io/${{ github.repository }}
-     context: .
-     repo: ${{ inputs.repo }}        
-   secrets: inherit
+  build:
+    uses: ./.github/workflows/npm.yml@main
+    secrets: inherit
+  sonar:
+    uses: ./.github/workflows/sonar.yml@main
+    secrets: inherit
+    needs: build
+  registry:
+    uses: ./.github/workflows/registryGhcr.yml@main
+    secrets: inherit
+    needs: sonar
