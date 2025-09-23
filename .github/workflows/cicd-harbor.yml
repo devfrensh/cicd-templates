@@ -3,13 +3,13 @@ on:
  workflow_call:
 jobs:
   build:
-    uses: ./.github/workflows/npm.yml
+    uses: ./.github/workflows/npm.yml@main
     secrets: inherit
   sonar:
-    uses: ./.github/workflows/sonar.yml
+    uses: ./.github/workflows/sonar.yml@main
     secrets: inherit
     needs: build
   registry:
-    uses: ./.github/workflows/registryGhcr.yml
+    uses: ./.github/workflows/registryGhcr.yml@main
     secrets: inherit
     needs: sonar
