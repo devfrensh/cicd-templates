@@ -31,9 +31,12 @@ jobs:
     secrets: inherit
     needs: build
   registry:
+    needs: sonar
+    permissions:
+      contents: read
+      packages: write
     uses: devfrensh/cicd-templates/.github/workflows/registryGhcr.yml@main
     with:
-     image: ghcr.io/${{ github.repository }}
-     context: .
+      image: ghcr.io/${{ github.repository }}
+      context: .
     secrets: inherit
-    needs: sonar
