@@ -9,9 +9,6 @@ on:
        type: string
        required: false
        default: .
-   secrets:
-     GITHUB_TOKEN:
-       required: true
 jobs:
  build-and-push-image:
    runs-on: ubuntu-latest
