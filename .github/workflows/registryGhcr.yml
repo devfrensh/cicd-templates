@@ -2,30 +2,41 @@ name: Registry GHCR
 on:
  workflow_call:
    inputs:
-     image:            # ej: ghcr.io/OWNER/REPO
+     image:
        type: string
        required: true
      context:
        type: string
        required: false
        default: .
+     repo:                 # <- NUEVO: OWNER/REPO del caller
+       type: string
+       required: true
 jobs:
  build-and-push-image:
    runs-on: ubuntu-latest
-   # 👈 ÚNICO CAMBIO IMPRESCINDIBLE (para GHCR)
    permissions:
      contents: read
-     packages: write   # necesario para publicar en GHCR
+     packages: write
    steps:
-     - name: Checkout
+     - name: Checkout caller repo
        uses: actions/checkout@v4
+       with:
+         repository: ${{ inputs.repo }}   # <- fuerza el repo correcto
+         ref: ${{ github.ref }}           # misma rama que disparó el workflow
+         token: ${{ secrets.GITHUB_TOKEN }}
+     # (opcional) ver que realmente está el Dockerfile
+     - name: Debug listing
+       run: |
+         pwd
+         ls -la
      - name: Login to GHCR
        uses: docker/login-action@v3
        with:
          registry: ghcr.io
          username: ${{ github.actor }}
          password: ${{ secrets.GITHUB_TOKEN }}
-     - name: Extract metadata (tags, labels)
+     - name: Docker meta
        id: meta
        uses: docker/metadata-action@v5
        with:
@@ -34,10 +45,10 @@ jobs:
            type=raw,value=${{ github.sha }}
            type=ref,event=branch
            type=ref,event=tag
-     - name: Build and push
+     - name: Build & Push
        uses: docker/build-push-action@v6
        with:
-         context: ${{ inputs.context }}
+         context: ${{ inputs.context }}   # normalmente "."
          push: true
          tags: ${{ steps.meta.outputs.tags }}
          labels: ${{ steps.meta.outputs.labels }}
