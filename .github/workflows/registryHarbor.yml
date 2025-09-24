@@ -11,7 +11,7 @@ on:
        type: string
        required: true
      project:
-       description: prototype-ntt
+       description: prototype-ntt-github
        type: string
        required: true
      tag_extra:
