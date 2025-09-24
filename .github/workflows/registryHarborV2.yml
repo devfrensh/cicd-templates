@@ -1,9 +1,8 @@
-name: Reusable - Build & Push to Harbor (auto)
+name: Reusable - Build & Push to Harbor (auto-map)
 on:
  workflow_call:
    inputs:
      extra_tags:
-       description: "Tags adicionales separados por coma (opcional)"
        type: string
        required: false
        default: ""
@@ -18,34 +17,38 @@ jobs:
    permissions:
      contents: read
      packages: read
-   # REGISTRY viene como variable de repo/org.
-   # PROJECT viene del Environment del caller (vars.HARBOR_PROJECT).
    env:
      REGISTRY:  ${{ vars.HARBOR_REGISTRY }}
-     PROJECT:   ${{ vars.HARBOR_PROJECT }}
      REPO_NAME: ${{ github.event.repository.name }}
      BRANCH:    ${{ github.ref_name }}
      SHA:       ${{ github.sha }}
+     PROJ_DEV:  ${{ vars.HARBOR_PROJECT_DEVELOP }}
+     PROJ_STG:  ${{ vars.HARBOR_PROJECT_STAGING }}
+     PROJ_PROD: ${{ vars.HARBOR_PROJECT_PROD }}
    steps:
      - uses: actions/checkout@v4
      - uses: docker/setup-qemu-action@v3
      - uses: docker/setup-buildx-action@v3
-     - name: Derive image & tags (auto)
+     - name: Derive project, image & tags
        id: meta
        shell: bash
        run: |
-         # image_name = nombre del repo, minúsculas y saneado
+         # elegir proyecto por rama
+         case "${BRANCH}" in
+           develop) PROJECT="${PROJ_DEV}" ;;
+           staging) PROJECT="${PROJ_STG}" ;;
+           main)    PROJECT="${PROJ_PROD}" ;;
+           *)       PROJECT="${PROJ_DEV}" ;;
+         esac
+         [ -n "${REGISTRY}" ] || { echo "Falta vars.HARBOR_REGISTRY"; exit 1; }
+         [ -n "${PROJECT}"  ] || { echo "Falta alguna vars.HARBOR_PROJECT_*"; exit 1; }
+         # nombre imagen = nombre del repo, saneado
          IMG="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
          BR="$(echo "${BRANCH}"    | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
-         # validaciones
-         [ -n "${REGISTRY}" ] || { echo "Falta vars.HARBOR_REGISTRY"; exit 1; }
-         [ -n "${PROJECT}"  ] || { echo "Falta vars.HARBOR_PROJECT (variable del Environment)"; exit 1; }
-         # tags por defecto: sha + branch (+ latest en main)
+         # tags: sha + branch (+ latest en main)
          TAGS="${REGISTRY}/${PROJECT}/${IMG}:${SHA},${REGISTRY}/${PROJECT}/${IMG}:${BR}"
-         if [ "${BRANCH}" = "main" ]; then
-           TAGS="${TAGS},${REGISTRY}/${PROJECT}/${IMG}:latest"
-         fi
-         # extra tags opcionales (coma-separado)
+         [ "${BRANCH}" = "main" ] && TAGS="${TAGS},${REGISTRY}/${PROJECT}/${IMG}:latest"
+         # extra tags opcionales
          if [ -n "${{ inputs.extra_tags }}" ]; then
            IFS=',' read -ra arr <<< "${{ inputs.extra_tags }}"
            for t in "${arr[@]}"; do
@@ -53,9 +56,8 @@ jobs:
              [ -z "$t" ] || TAGS="${TAGS},${REGISTRY}/${PROJECT}/${IMG}:$t"
            done
          fi
-         echo "image=$IMG"  >> $GITHUB_OUTPUT
-         echo "tags=$TAGS"  >> $GITHUB_OUTPUT
-         echo "Publicaré:"
+         echo "tags=$TAGS" >> $GITHUB_OUTPUT
+         echo "Destino:"
          echo "$TAGS" | tr ',' '\n'
      - name: Login to Harbor
        uses: docker/login-action@v3
