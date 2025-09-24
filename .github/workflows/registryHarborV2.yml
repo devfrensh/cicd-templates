@@ -22,7 +22,7 @@ jobs:
      REPO_NAME: ${{ github.event.repository.name }}
      BRANCH:    ${{ github.ref_name }}
      SHA:       ${{ github.sha }}
-     PROJ_DEV:  ${{ vars.HARBOR_PROJECT_DEV }}
+     PROJ_DEV:  ${{ vars.HARBOR_PROJECT_DEVELOP }}
      PROJ_STG:  ${{ vars.HARBOR_PROJECT_STAGING }}
      PROJ_PROD: ${{ vars.HARBOR_PROJECT_PROD }}
    steps:
