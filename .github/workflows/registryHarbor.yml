@@ -3,19 +3,18 @@ on:
  workflow_call:
    inputs:
      image_name:
-       description: Nombre de la imagen (ej: app)
+       description: app
        type: string
        required: true
      registry:
-       description: FQDN del Harbor (ej: demo.goharbor.io o harbor.local)
+       description: demo.goharbor.io o harbor.local
        type: string
        required: true
      project:
-       description: Proyecto de Harbor (ej: prototype-ntt)
+       description: prototype-ntt
        type: string
        required: true
      tag_extra:
-       description: Etiqueta adicional (ej: latest). Vacío para omitir.
        type: string
        required: false
        default: latest
