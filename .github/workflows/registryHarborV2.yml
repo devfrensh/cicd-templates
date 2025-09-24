@@ -1,4 +1,5 @@
 name: Reusable - Build & Push to Harbor
+on:
  workflow_call:
    inputs:
      extra_tags:
