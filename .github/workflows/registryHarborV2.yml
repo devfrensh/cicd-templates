@@ -1,5 +1,4 @@
-name: Reusable - Build & Push to Harbor (auto-map)
-on:
+name: Reusable - Build & Push to Harbor
  workflow_call:
    inputs:
      extra_tags:
@@ -18,46 +17,45 @@ jobs:
      contents: read
      packages: read
    env:
-     REGISTRY:  ${{ vars.HARBOR_REGISTRY }}
-     REPO_NAME: ${{ github.event.repository.name }}
-     BRANCH:    ${{ github.ref_name }}
-     SHA:       ${{ github.sha }}
-     PROJ_DEV:  ${{ vars.HARBOR_PROJECT_DEVELOP }}
-     PROJ_STG:  ${{ vars.HARBOR_PROJECT_STAGING }}
-     PROJ_PROD: ${{ vars.HARBOR_PROJECT_PROD }}
+     REGISTRY:   ${{ vars.HARBOR_REGISTRY }}
+     REPO_NAME:  ${{ github.event.repository.name }}
+     BRANCH:     ${{ github.ref_name }}
+     SHA:        ${{ github.sha }}
+     # SOLO DEV: el promote se encarga de staging/prod
+     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP || vars.HARBOR_PROJECT_DEV || vars.HARBOR_PROJECT }}
    steps:
      - uses: actions/checkout@v4
      - uses: docker/setup-qemu-action@v3
      - uses: docker/setup-buildx-action@v3
-     - name: Derive project, image & tags
+     - name: Derive image & tags (push to DEV only)
        id: meta
        shell: bash
        run: |
-         # elegir proyecto por rama
-         case "${BRANCH}" in
-           develop) PROJECT="${PROJ_DEV}" ;;
-           staging) PROJECT="${PROJ_STG}" ;;
-           main)    PROJECT="${PROJ_PROD}" ;;
-           *)       PROJECT="${PROJ_DEV}" ;;
-         esac
+         set -euo pipefail
          [ -n "${REGISTRY}" ] || { echo "Falta vars.HARBOR_REGISTRY"; exit 1; }
-         [ -n "${PROJECT}"  ] || { echo "Falta alguna vars.HARBOR_PROJECT_*"; exit 1; }
-         # nombre imagen = nombre del repo, saneado
+         [ -n "${PROJ_DEV}" ] || { echo "Falta HARBOR_PROJECT_DEVELOP/DEV/HARBOR_PROJECT"; exit 1; }
          IMG="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
          BR="$(echo "${BRANCH}"    | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
-         # tags: sha + branch (+ latest en main)
-         TAGS="${REGISTRY}/${PROJECT}/${IMG}:${SHA},${REGISTRY}/${PROJECT}/${IMG}:${BR}"
-         [ "${BRANCH}" = "main" ] && TAGS="${TAGS},${REGISTRY}/${PROJECT}/${IMG}:latest"
-         # extra tags opcionales
+         # Siempre tag SHA
+         TAGS="${REGISTRY}/${PROJ_DEV}/${IMG}:${SHA}"
+         # Si es develop, también :develop (fuente de la promoción)
+         if [ "${BRANCH}" = "develop" ]; then
+           TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:develop"
+         fi
+         # Opcional: tag de la rama para trazabilidad (evita staging/main)
+         if [ "${BRANCH}" != "staging" ] && [ "${BRANCH}" != "main" ]; then
+           TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:${BR}"
+         fi
+         # Extra tags opcionales en DEV
          if [ -n "${{ inputs.extra_tags }}" ]; then
            IFS=',' read -ra arr <<< "${{ inputs.extra_tags }}"
            for t in "${arr[@]}"; do
-             t=$(echo "$t" | xargs)
-             [ -z "$t" ] || TAGS="${TAGS},${REGISTRY}/${PROJECT}/${IMG}:$t"
+             t="$(echo "$t" | xargs)"; [ -z "$t" ] && continue
+             TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:$t"
            done
          fi
-         echo "tags=$TAGS" >> $GITHUB_OUTPUT
-         echo "Destino:"
+         echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+         echo "Destino (DEV):"
          echo "$TAGS" | tr ',' '\n'
      - name: Login to Harbor
        uses: docker/login-action@v3
@@ -65,10 +63,12 @@ jobs:
          registry: ${{ env.REGISTRY }}
          username: ${{ secrets.HARBOR_USERNAME }}
          password: ${{ secrets.HARBOR_PASSWORD }}
-     - name: Build & Push
+     - name: Build & Push (DEV)
        uses: docker/build-push-action@v6
        with:
          context: .
          push: true
          tags: ${{ steps.meta.outputs.tags }}
          provenance: false
+         cache-from: type=gha
+         cache-to: type=gha,mode=max

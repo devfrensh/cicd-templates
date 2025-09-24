@@ -1,4 +1,4 @@
-name: Reusable - Promote Harbor (auto dev → stg + prod)
+name: Crane Promote Image
 on:
  workflow_call:
    inputs:
@@ -18,9 +18,9 @@ jobs:
      REG:        ${{ vars.HARBOR_REGISTRY }}
      REPO_NAME:  ${{ github.event.repository.name }}
      # tolerante con nombres de variables o 1 solo proyecto
-     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP || vars.HARBOR_PROJECT_DEV || vars.HARBOR_PROJECT }}
-     PROJ_STG:   ${{ vars.HARBOR_PROJECT_STAGING || vars.HARBOR_PROJECT_STG || vars.HARBOR_PROJECT }}
-     PROJ_PROD:  ${{ vars.HARBOR_PROJECT_PROD     || vars.HARBOR_PROJECT }}
+     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP || vars.HARBOR_PROJECT_DEV }}
+     PROJ_STG:   ${{ vars.HARBOR_PROJECT_STAGING || vars.HARBOR_PROJECT_STG }}
+     PROJ_PROD:  ${{ vars.HARBOR_PROJECT_PROD }}
    steps:
      - name: Install crane
        run: |
