@@ -1,0 +1,100 @@
+name: Reusable - Promote Harbor (auto dev → stg + prod)
+on:
+ workflow_call:
+   inputs:
+     src_tag:               # opcional: por defecto 'develop' (puedes pasar un SHA)
+       type: string
+       required: false
+       default: "develop"
+   secrets:
+     HARBOR_USERNAME:
+       required: true
+     HARBOR_PASSWORD:
+       required: true
+jobs:
+ promote:
+   runs-on: ubuntu-latest
+   env:
+     REG:        ${{ vars.HARBOR_REGISTRY }}
+     REPO_NAME:  ${{ github.event.repository.name }}
+     # tolerante con nombres de variables o 1 solo proyecto
+     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP || vars.HARBOR_PROJECT_DEV || vars.HARBOR_PROJECT }}
+     PROJ_STG:   ${{ vars.HARBOR_PROJECT_STAGING || vars.HARBOR_PROJECT_STG || vars.HARBOR_PROJECT }}
+     PROJ_PROD:  ${{ vars.HARBOR_PROJECT_PROD     || vars.HARBOR_PROJECT }}
+   steps:
+     - name: Install crane
+       run: |
+         curl -sSL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz \
+         | sudo tar -xz -C /usr/local/bin crane
+     - name: Resolve image + digest (from develop)
+       id: meta
+       shell: bash
+       run: |
+         set -euo pipefail
+         IMG="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
+         [ -n "${REG}" ] || { echo "Falta vars.HARBOR_REGISTRY"; exit 1; }
+         [ -n "${PROJ_DEV}" ] || { echo "Falta HARBOR_PROJECT_DEVELOP/DEV/HARBOR_PROJECT"; exit 1; }
+         [ -n "${PROJ_STG}" ] || { echo "Falta HARBOR_PROJECT_STAGING/STG/HARBOR_PROJECT"; exit 1; }
+         [ -n "${PROJ_PROD}" ] || { echo "Falta HARBOR_PROJECT_PROD/HARBOR_PROJECT"; exit 1; }
+         SRC_REF="${REG}/${PROJ_DEV}/${IMG}:${{ inputs.src_tag }}"
+         DIGEST="$(crane digest "$SRC_REF")"
+         echo "img=$IMG"      >> $GITHUB_OUTPUT
+         echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+         echo "Usando digest: $DIGEST de $SRC_REF"
+     - name: Harbor login
+       env:
+         USER: ${{ secrets.HARBOR_USERNAME }}
+         PASS: ${{ secrets.HARBOR_PASSWORD }}
+         REG:  ${{ env.REG }}
+       run: |
+         echo "$PASS" | crane auth login "$REG" -u "$USER" --password-stdin
+     - name: Promote to STAGING (:staging)
+       shell: bash
+       run: |
+         set -euo pipefail
+         SRC="@${{ steps.meta.outputs.digest }}"
+         SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
+         DST_REF="${{ env.REG }}/${{ env.PROJ_STG }}/${{ steps.meta.outputs.img }}:staging"
+         if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_STG }}" ]; then
+           echo "Same project, tagging: $SRC_REF -> :staging"
+           crane tag "$SRC_REF" "staging"
+         else
+           echo "Cross project, copying: $SRC_REF -> $DST_REF"
+           crane copy "$SRC_REF" "$DST_REF"
+         fi
+     - name: Promote to PROD (:main, :latest, extras)
+       shell: bash
+       run: |
+         set -euo pipefail
+         SRC="@${{ steps.meta.outputs.digest }}"
+         SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
+         # Tags de prod por defecto
+         tags="main,latest"
+         # Extras si vienen
+         if [ -n "${{ inputs.extra_prod_tags }}" ]; then
+           tags="$tags,${{ inputs.extra_prod_tags }}"
+         fi
+         IFS=',' read -ra TAGS <<< "$tags"
+         for t in "${TAGS[@]}"; do
+           tag="$(echo "$t" | xargs)"; [ -z "$tag" ] && continue
+           if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_PROD }}" ]; then
+             echo "Same project, tagging: $SRC_REF -> :$tag"
+             crane tag "$SRC_REF" "$tag"
+           else
+             DST_REF="${{ env.REG }}/${{ env.PROJ_PROD }}/${{ steps.meta.outputs.img }}:$tag"
+             echo "Cross project, copying: $SRC_REF -> $DST_REF"
+             crane copy "$SRC_REF" "$DST_REF"
+           fi
+         done
+     - name: Verify PROD (:main) exists (200)
+       env:
+         REG: ${{ env.REG }}
+         PROJ: ${{ env.PROJ_PROD }}
+         IMG:  ${{ steps.meta.outputs.img }}
+       shell: bash
+       run: |
+         code=$(curl -sk -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
+                -o /dev/null -w "%{http_code}" \
+                "https://${REG}/v2/${PROJ}/${IMG}/manifests/main")
+         echo "Manifest status PROD:main -> $code"
+         test "$code" = "200"
