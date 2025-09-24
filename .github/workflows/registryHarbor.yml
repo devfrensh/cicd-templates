@@ -7,7 +7,7 @@ on:
        type: string
        required: true
      registry:
-       description: demo.goharbor.io o harbor.local
+       description: demo.goharbor.io
        type: string
        required: true
      project:
