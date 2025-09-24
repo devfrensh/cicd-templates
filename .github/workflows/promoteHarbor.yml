@@ -6,58 +6,64 @@ on:
      src_tag:
        type: string
        required: false
-       default: "develop"
+       default: develop
      # Tags extra para PROD (coma-separados). Opcional.
      extra_prod_tags:
        type: string
        required: false
        default: ""
    secrets:
-     HARBOR_USERNAME_DEV:     { required: true }
-     HARBOR_PASSWORD_DEV:     { required: true }
-     HARBOR_USERNAME_STAGING: { required: true }
-     HARBOR_PASSWORD_STAGING: { required: true }
-     HARBOR_USERNAME_PROD:    { required: true }
-     HARBOR_PASSWORD_PROD:    { required: true }
+     HARBOR_USERNAME_DEV:
+       required: true
+     HARBOR_PASSWORD_DEV:
+       required: true
+     HARBOR_USERNAME_STAGING:
+       required: true
+     HARBOR_PASSWORD_STAGING:
+       required: true
+     HARBOR_USERNAME_PROD:
+       required: true
+     HARBOR_PASSWORD_PROD:
+       required: true
 jobs:
  promote:
-   runs-on: ubuntu-latest
    name: Promote (crane)
+   runs-on: ubuntu-latest
    env:
-     REG:        ${{ vars.HARBOR_REGISTRY }}
-     REPO_NAME:  ${{ github.event.repository.name }}
-     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP }}
-     PROJ_STG:   ${{ vars.HARBOR_PROJECT_STAGING }}
-     PROJ_PROD:  ${{ vars.HARBOR_PROJECT_PROD }}
+     REG:       ${{ vars.HARBOR_REGISTRY }}
+     REPO_NAME: ${{ github.event.repository.name }}
+     PROJ_DEV:  ${{ vars.HARBOR_PROJECT_DEVELOP }}
+     PROJ_STG:  ${{ vars.HARBOR_PROJECT_STAGING }}
+     PROJ_PROD: ${{ vars.HARBOR_PROJECT_PROD }}
    steps:
      - name: Install crane
        shell: bash
        run: |
          set -eux
-         ARCH="$(uname -m)"
-         case "$ARCH" in
-           x86_64)  PKG=go-containerregistry_Linux_x86_64.tar.gz ;;
-           aarch64) PKG=go-containerregistry_Linux_arm64.tar.gz ;;
-           *) echo "Arch no soportada: $ARCH"; exit 1 ;;
+         arch="$(uname -m)"
+         case "$arch" in
+           x86_64)  pkg=go-containerregistry_Linux_x86_64.tar.gz ;;
+           aarch64) pkg=go-containerregistry_Linux_arm64.tar.gz ;;
+           *) echo "unsupported arch: $arch"; exit 1 ;;
          esac
-         curl -sSL "https://github.com/google/go-containerregistry/releases/latest/download/${PKG}" \
+         curl -sSL "https://github.com/google/go-containerregistry/releases/latest/download/${pkg}" \
          | sudo tar -xz -C /usr/local/bin crane
      - name: Resolve image + digest (from DEV)
        id: meta
        shell: bash
        run: |
          set -euo pipefail
-         [ -n "${REG}" ]        || { echo "Falta HARBOR_REGISTRY"; exit 1; }
-         [ -n "${PROJ_DEV}" ]   || { echo "Falta HARBOR_PROJECT_DEVELOP"; exit 1; }
-         [ -n "${PROJ_STG}" ]   || { echo "Falta HARBOR_PROJECT_STAGING"; exit 1; }
-         [ -n "${PROJ_PROD}" ]  || { echo "Falta HARBOR_PROJECT_PROD"; exit 1; }
+         [ -n "${REG}" ]       || { echo "Missing HARBOR_REGISTRY"; exit 1; }
+         [ -n "${PROJ_DEV}" ]  || { echo "Missing HARBOR_PROJECT_DEVELOP"; exit 1; }
+         [ -n "${PROJ_STG}" ]  || { echo "Missing HARBOR_PROJECT_STAGING"; exit 1; }
+         [ -n "${PROJ_PROD}" ] || { echo "Missing HARBOR_PROJECT_PROD"; exit 1; }
          IMG="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
          SRC_REF="${REG}/${PROJ_DEV}/${IMG}:${{ inputs.src_tag }}"
          DIGEST="$(crane digest "$SRC_REF")"
-         echo "img=$IMG"        >> "$GITHUB_OUTPUT"
-         echo "digest=$DIGEST"  >> "$GITHUB_OUTPUT"
-         echo "Usando digest $DIGEST de $SRC_REF"
-    - name: Promote to STAGING (:staging)
+         echo "img=$IMG" >> "$GITHUB_OUTPUT"
+         echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+         echo "Using digest $DIGEST from $SRC_REF"
+     - name: Promote to STAGING (:staging)
        shell: bash
        env:
          SRC_USER: ${{ secrets.HARBOR_USERNAME_DEV }}
@@ -70,15 +76,13 @@ jobs:
          SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
          DST_REF="${{ env.REG }}/${{ env.PROJ_STG }}/${{ steps.meta.outputs.img }}:staging"
          if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_STG }}" ]; then
-           echo "Mismo proyecto: tag :staging"
            crane tag "$SRC_REF" "staging" --auth "${SRC_USER}:${SRC_PASS}"
          else
-           echo "Copia entre proyectos DEV -> STG"
            crane copy "$SRC_REF" "$DST_REF" \
-             --src-auth  "${SRC_USER}:${SRC_PASS}" \
+             --src-auth "${SRC_USER}:${SRC_PASS}" \
              --dest-auth "${DST_USER}:${DST_PASS}"
          fi
-    - name: Promote to PROD (:main, :latest, extras)
+     - name: Promote to PROD (:main, :latest, extras)
        shell: bash
        env:
          SRC_USER: ${{ secrets.HARBOR_USERNAME_DEV }}
@@ -89,20 +93,17 @@ jobs:
          set -euo pipefail
          SRC="@${{ steps.meta.outputs.digest }}"
          SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
-         # Tags de prod por defecto + extras
          tags="main,latest"
          [ -n "${{ inputs.extra_prod_tags }}" ] && tags="$tags,${{ inputs.extra_prod_tags }}"
          IFS=',' read -ra TAGS <<< "$tags"
          for t in "${TAGS[@]}"; do
            tag="$(echo "$t" | xargs)"; [ -z "$tag" ] && continue
            if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_PROD }}" ]; then
-             echo "Mismo proyecto: tag :$tag"
              crane tag "$SRC_REF" "$tag" --auth "${SRC_USER}:${SRC_PASS}"
            else
              DST_REF="${{ env.REG }}/${{ env.PROJ_PROD }}/${{ steps.meta.outputs.img }}:$tag"
-             echo "Copia DEV -> PROD a :$tag"
              crane copy "$SRC_REF" "$DST_REF" \
-               --src-auth  "${SRC_USER}:${SRC_PASS}" \
+               --src-auth "${SRC_USER}:${SRC_PASS}" \
                --dest-auth "${DST_USER}:${DST_PASS}"
            fi
          done
