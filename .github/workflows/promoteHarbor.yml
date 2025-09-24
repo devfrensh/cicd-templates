@@ -57,7 +57,7 @@ jobs:
          echo "img=$IMG"        >> "$GITHUB_OUTPUT"
          echo "digest=$DIGEST"  >> "$GITHUB_OUTPUT"
          echo "Usando digest $DIGEST de $SRC_REF"
-     - name: Promote to STAGING (:staging)
+    - name: Promote to STAGING (:staging)
        shell: bash
        env:
          SRC_USER: ${{ secrets.HARBOR_USERNAME_DEV }}
@@ -71,14 +71,14 @@ jobs:
          DST_REF="${{ env.REG }}/${{ env.PROJ_STG }}/${{ steps.meta.outputs.img }}:staging"
          if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_STG }}" ]; then
            echo "Mismo proyecto: tag :staging"
-           crane tag "$SRC_REF" "staging" --creds "${SRC_USER}:${SRC_PASS}"
+           crane tag "$SRC_REF" "staging" --auth "${SRC_USER}:${SRC_PASS}"
          else
            echo "Copia entre proyectos DEV -> STG"
            crane copy "$SRC_REF" "$DST_REF" \
-             --src-creds "${SRC_USER}:${SRC_PASS}" \
-             --dest-creds "${DST_USER}:${DST_PASS}"
+             --src-auth  "${SRC_USER}:${SRC_PASS}" \
+             --dest-auth "${DST_USER}:${DST_PASS}"
          fi
-     - name: Promote to PROD (:main, :latest, extras)
+    - name: Promote to PROD (:main, :latest, extras)
        shell: bash
        env:
          SRC_USER: ${{ secrets.HARBOR_USERNAME_DEV }}
@@ -89,6 +89,7 @@ jobs:
          set -euo pipefail
          SRC="@${{ steps.meta.outputs.digest }}"
          SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
+         # Tags de prod por defecto + extras
          tags="main,latest"
          [ -n "${{ inputs.extra_prod_tags }}" ] && tags="$tags,${{ inputs.extra_prod_tags }}"
          IFS=',' read -ra TAGS <<< "$tags"
@@ -96,13 +97,13 @@ jobs:
            tag="$(echo "$t" | xargs)"; [ -z "$tag" ] && continue
            if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_PROD }}" ]; then
              echo "Mismo proyecto: tag :$tag"
-             crane tag "$SRC_REF" "$tag" --creds "${SRC_USER}:${SRC_PASS}"
+             crane tag "$SRC_REF" "$tag" --auth "${SRC_USER}:${SRC_PASS}"
            else
              DST_REF="${{ env.REG }}/${{ env.PROJ_PROD }}/${{ steps.meta.outputs.img }}:$tag"
              echo "Copia DEV -> PROD a :$tag"
              crane copy "$SRC_REF" "$DST_REF" \
-               --src-creds "${SRC_USER}:${SRC_PASS}" \
-               --dest-creds "${DST_USER}:${DST_PASS}"
+               --src-auth  "${SRC_USER}:${SRC_PASS}" \
+               --dest-auth "${DST_USER}:${DST_PASS}"
            fi
          done
      - name: Verify PROD (:main) exists (200)
