@@ -1,4 +1,4 @@
-name: Reusable - Build & Push to Harbor
+name: Reusable - Build & Push to Harbor (only develop)
 on:
  workflow_call:
    inputs:
@@ -6,14 +6,11 @@ on:
        type: string
        required: false
        default: ""
-   secrets:
-     HARBOR_USERNAME:
-       required: true
-     HARBOR_PASSWORD:
-       required: true
 jobs:
  push:
-   name: Harbor
+   # Solo corre en develop (evita rebuilds en staging/main)
+   if: github.ref_name == 'develop'
+   name: Harbor / Build & Push (DEV)
    runs-on: ubuntu-latest
    permissions:
      contents: read
@@ -23,32 +20,26 @@ jobs:
      REPO_NAME:  ${{ github.event.repository.name }}
      BRANCH:     ${{ github.ref_name }}
      SHA:        ${{ github.sha }}
-     # SOLO DEV: el promote se encarga de staging/prod
+     # Solo DEV: el promote se encarga de STG/PROD
      PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP || vars.HARBOR_PROJECT_DEV || vars.HARBOR_PROJECT }}
    steps:
      - uses: actions/checkout@v4
      - uses: docker/setup-qemu-action@v3
      - uses: docker/setup-buildx-action@v3
-     - name: Derive image & tags (push to DEV only)
+     - name: Derive image & tags (DEV only)
        id: meta
        shell: bash
        run: |
          set -euo pipefail
          [ -n "${REGISTRY}" ] || { echo "Falta vars.HARBOR_REGISTRY"; exit 1; }
          [ -n "${PROJ_DEV}" ] || { echo "Falta HARBOR_PROJECT_DEVELOP/DEV/HARBOR_PROJECT"; exit 1; }
+         # nombre imagen = nombre del repo (saneado)
          IMG="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
-         BR="$(echo "${BRANCH}"    | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
-         # Siempre tag SHA
+         # tags base (siempre SHA)
          TAGS="${REGISTRY}/${PROJ_DEV}/${IMG}:${SHA}"
-         # Si es develop, también :develop (fuente de la promoción)
-         if [ "${BRANCH}" = "develop" ]; then
-           TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:develop"
-         fi
-         # Opcional: tag de la rama para trazabilidad (evita staging/main)
-         if [ "${BRANCH}" != "staging" ] && [ "${BRANCH}" != "main" ]; then
-           TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:${BR}"
-         fi
-         # Extra tags opcionales en DEV
+         # fuente de la promoción
+         TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:develop"
+         # tags extra opcionales (en DEV)
          if [ -n "${{ inputs.extra_tags }}" ]; then
            IFS=',' read -ra arr <<< "${{ inputs.extra_tags }}"
            for t in "${arr[@]}"; do
@@ -56,16 +47,19 @@ jobs:
              TAGS="${TAGS},${REGISTRY}/${PROJ_DEV}/${IMG}:$t"
            done
          fi
-         echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+         echo "img=${IMG}"         >> "$GITHUB_OUTPUT"
+         echo "tags=${TAGS}"       >> "$GITHUB_OUTPUT"
          echo "Destino (DEV):"
          echo "$TAGS" | tr ',' '\n'
-     - name: Login to Harbor
+     # Secrets por ambiente (DEV)
+     - name: Login to Harbor (DEV)
        uses: docker/login-action@v3
        with:
-         registry: ${{ env.REGISTRY }}
-         username: ${{ secrets.HARBOR_USERNAME }}
-         password: ${{ secrets.HARBOR_PASSWORD }}
+         registry:  ${{ env.REGISTRY }}
+         username:  ${{ secrets.HARBOR_USERNAME_DEV }}
+         password:  ${{ secrets.HARBOR_PASSWORD_DEV }}
      - name: Build & Push (DEV)
+       id: bp
        uses: docker/build-push-action@v6
        with:
          context: .
@@ -73,4 +67,10 @@ jobs:
          tags: ${{ steps.meta.outputs.tags }}
          provenance: false
          cache-from: type=gha
-         cache-to: type=gha,mode=max
+         cache-to:   type=gha,mode=max
+     - name: Show pushed digest & tags
+       run: |
+         echo "Pushed tags:"
+         echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'
+         # El digest lo imprime buildx en logs; si quieres guardarlo:
+         # crane digest "$FIRST_TAG"

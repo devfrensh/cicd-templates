@@ -2,100 +2,120 @@ name: Crane Promote Image
 on:
  workflow_call:
    inputs:
-     src_tag:               # opcional: por defecto 'develop' (puedes pasar un SHA)
+     # Origen: normalmente 'develop', pero puedes pasar un SHA
+     src_tag:
        type: string
        required: false
        default: "develop"
+     # Tags extra para PROD (coma-separados). Opcional.
+     extra_prod_tags:
+       type: string
+       required: false
+       default: ""
    secrets:
-     HARBOR_USERNAME:
-       required: true
-     HARBOR_PASSWORD:
-       required: true
+     HARBOR_USERNAME_DEV:     { required: true }
+     HARBOR_PASSWORD_DEV:     { required: true }
+     HARBOR_USERNAME_STAGING: { required: true }
+     HARBOR_PASSWORD_STAGING: { required: true }
+     HARBOR_USERNAME_PROD:    { required: true }
+     HARBOR_PASSWORD_PROD:    { required: true }
 jobs:
  promote:
-   name: Crane
    runs-on: ubuntu-latest
+   name: Promote (crane)
    env:
      REG:        ${{ vars.HARBOR_REGISTRY }}
      REPO_NAME:  ${{ github.event.repository.name }}
-     # tolerante con nombres de variables o 1 solo proyecto
-     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP || vars.HARBOR_PROJECT_DEV }}
-     PROJ_STG:   ${{ vars.HARBOR_PROJECT_STAGING || vars.HARBOR_PROJECT_STG }}
+     PROJ_DEV:   ${{ vars.HARBOR_PROJECT_DEVELOP }}
+     PROJ_STG:   ${{ vars.HARBOR_PROJECT_STAGING }}
      PROJ_PROD:  ${{ vars.HARBOR_PROJECT_PROD }}
    steps:
      - name: Install crane
+       shell: bash
        run: |
-         curl -sSL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz \
+         set -eux
+         ARCH="$(uname -m)"
+         case "$ARCH" in
+           x86_64)  PKG=go-containerregistry_Linux_x86_64.tar.gz ;;
+           aarch64) PKG=go-containerregistry_Linux_arm64.tar.gz ;;
+           *) echo "Arch no soportada: $ARCH"; exit 1 ;;
+         esac
+         curl -sSL "https://github.com/google/go-containerregistry/releases/latest/download/${PKG}" \
          | sudo tar -xz -C /usr/local/bin crane
-     - name: Resolve image + digest (from develop)
+     - name: Resolve image + digest (from DEV)
        id: meta
        shell: bash
        run: |
          set -euo pipefail
+         [ -n "${REG}" ]        || { echo "Falta HARBOR_REGISTRY"; exit 1; }
+         [ -n "${PROJ_DEV}" ]   || { echo "Falta HARBOR_PROJECT_DEVELOP"; exit 1; }
+         [ -n "${PROJ_STG}" ]   || { echo "Falta HARBOR_PROJECT_STAGING"; exit 1; }
+         [ -n "${PROJ_PROD}" ]  || { echo "Falta HARBOR_PROJECT_PROD"; exit 1; }
          IMG="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
-         [ -n "${REG}" ] || { echo "Falta vars.HARBOR_REGISTRY"; exit 1; }
-         [ -n "${PROJ_DEV}" ] || { echo "Falta HARBOR_PROJECT_DEVELOP/DEV/HARBOR_PROJECT"; exit 1; }
-         [ -n "${PROJ_STG}" ] || { echo "Falta HARBOR_PROJECT_STAGING/STG/HARBOR_PROJECT"; exit 1; }
-         [ -n "${PROJ_PROD}" ] || { echo "Falta HARBOR_PROJECT_PROD/HARBOR_PROJECT"; exit 1; }
          SRC_REF="${REG}/${PROJ_DEV}/${IMG}:${{ inputs.src_tag }}"
          DIGEST="$(crane digest "$SRC_REF")"
-         echo "img=$IMG"      >> $GITHUB_OUTPUT
-         echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-         echo "Usando digest: $DIGEST de $SRC_REF"
-     - name: Harbor login
-       env:
-         USER: ${{ secrets.HARBOR_USERNAME }}
-         PASS: ${{ secrets.HARBOR_PASSWORD }}
-         REG:  ${{ env.REG }}
-       run: |
-         echo "$PASS" | crane auth login "$REG" -u "$USER" --password-stdin
+         echo "img=$IMG"        >> "$GITHUB_OUTPUT"
+         echo "digest=$DIGEST"  >> "$GITHUB_OUTPUT"
+         echo "Usando digest $DIGEST de $SRC_REF"
      - name: Promote to STAGING (:staging)
        shell: bash
+       env:
+         SRC_USER: ${{ secrets.HARBOR_USERNAME_DEV }}
+         SRC_PASS: ${{ secrets.HARBOR_PASSWORD_DEV }}
+         DST_USER: ${{ secrets.HARBOR_USERNAME_STAGING }}
+         DST_PASS: ${{ secrets.HARBOR_PASSWORD_STAGING }}
        run: |
          set -euo pipefail
          SRC="@${{ steps.meta.outputs.digest }}"
          SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
          DST_REF="${{ env.REG }}/${{ env.PROJ_STG }}/${{ steps.meta.outputs.img }}:staging"
          if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_STG }}" ]; then
-           echo "Same project, tagging: $SRC_REF -> :staging"
-           crane tag "$SRC_REF" "staging"
+           echo "Mismo proyecto: tag :staging"
+           crane tag "$SRC_REF" "staging" --creds "${SRC_USER}:${SRC_PASS}"
          else
-           echo "Cross project, copying: $SRC_REF -> $DST_REF"
-           crane copy "$SRC_REF" "$DST_REF"
+           echo "Copia entre proyectos DEV -> STG"
+           crane copy "$SRC_REF" "$DST_REF" \
+             --src-creds "${SRC_USER}:${SRC_PASS}" \
+             --dest-creds "${DST_USER}:${DST_PASS}"
          fi
      - name: Promote to PROD (:main, :latest, extras)
        shell: bash
+       env:
+         SRC_USER: ${{ secrets.HARBOR_USERNAME_DEV }}
+         SRC_PASS: ${{ secrets.HARBOR_PASSWORD_DEV }}
+         DST_USER: ${{ secrets.HARBOR_USERNAME_PROD }}
+         DST_PASS: ${{ secrets.HARBOR_PASSWORD_PROD }}
        run: |
          set -euo pipefail
          SRC="@${{ steps.meta.outputs.digest }}"
          SRC_REF="${{ env.REG }}/${{ env.PROJ_DEV }}/${{ steps.meta.outputs.img }}$SRC"
-         # Tags de prod por defecto
          tags="main,latest"
-         # Extras si vienen
-         if [ -n "${{ inputs.extra_prod_tags }}" ]; then
-           tags="$tags,${{ inputs.extra_prod_tags }}"
-         fi
+         [ -n "${{ inputs.extra_prod_tags }}" ] && tags="$tags,${{ inputs.extra_prod_tags }}"
          IFS=',' read -ra TAGS <<< "$tags"
          for t in "${TAGS[@]}"; do
            tag="$(echo "$t" | xargs)"; [ -z "$tag" ] && continue
            if [ "${{ env.PROJ_DEV }}" = "${{ env.PROJ_PROD }}" ]; then
-             echo "Same project, tagging: $SRC_REF -> :$tag"
-             crane tag "$SRC_REF" "$tag"
+             echo "Mismo proyecto: tag :$tag"
+             crane tag "$SRC_REF" "$tag" --creds "${SRC_USER}:${SRC_PASS}"
            else
              DST_REF="${{ env.REG }}/${{ env.PROJ_PROD }}/${{ steps.meta.outputs.img }}:$tag"
-             echo "Cross project, copying: $SRC_REF -> $DST_REF"
-             crane copy "$SRC_REF" "$DST_REF"
+             echo "Copia DEV -> PROD a :$tag"
+             crane copy "$SRC_REF" "$DST_REF" \
+               --src-creds "${SRC_USER}:${SRC_PASS}" \
+               --dest-creds "${DST_USER}:${DST_PASS}"
            fi
          done
      - name: Verify PROD (:main) exists (200)
+       shell: bash
        env:
-         REG: ${{ env.REG }}
+         USER: ${{ secrets.HARBOR_USERNAME_PROD }}
+         PASS: ${{ secrets.HARBOR_PASSWORD_PROD }}
+         REG:  ${{ env.REG }}
          PROJ: ${{ env.PROJ_PROD }}
          IMG:  ${{ steps.meta.outputs.img }}
-       shell: bash
        run: |
-         code=$(curl -sk -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
+         code=$(curl -sk -u "${USER}:${PASS}" \
                 -o /dev/null -w "%{http_code}" \
                 "https://${REG}/v2/${PROJ}/${IMG}/manifests/main")
-         echo "Manifest status PROD:main -> $code"
+         echo "Manifest PROD:main -> $code"
          test "$code" = "200"
