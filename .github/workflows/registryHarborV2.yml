@@ -10,7 +10,7 @@ jobs:
  push:
    # Solo corre en develop (evita rebuilds en staging/main)
    if: github.ref_name == 'develop'
-   name: Harbor / Build & Push (DEV)
+   name: Harbor / Build & Push
    runs-on: ubuntu-latest
    permissions:
      contents: read
