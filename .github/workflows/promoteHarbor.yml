@@ -55,7 +55,7 @@ jobs:
          echo "img=$IMG" >> "$GITHUB_OUTPUT"
          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
          echo "Using digest $DIGEST from $SRC_REF"
-     # === FIX: login y promover a STAGING ===
+     # === login y promover a STAGING ===
      - name: Promote to STAGING (:staging)
        shell: bash
        env:
@@ -78,7 +78,7 @@ jobs:
            echo "Copia DEV -> STG"
            crane copy "$SRC_REF" "$DST_REF"
          fi
-     # === FIX: login y promover a PROD ===
+     # === login y promover a PROD ===
      - name: Promote to PROD (:main, :latest, extras)
        shell: bash
        env:
