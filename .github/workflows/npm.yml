@@ -1,18 +1,12 @@
 name: Dependency Install
 on:
- workflow_call:
+ workflow_call:        # habilita que lo llamen otros repos
 jobs:
- dependency:
-   runs-on: [self-hosted, linux, x64, wsl-linux]
-   permissions:
-     contents: read
-   environment: ${{ github.ref_name }}
-   steps:
-     - uses: actions/checkout@v4
-     - name: Check Node/npm available (fail fast)
-       run: |
-         set -e
-         echo "Node: $(node -v)"
-         echo "npm:  $(npm -v)"
-     - name: Install dependencies
-       run: npm ci --no-audit --no-fund
+  dependency:
+    runs-on: [self-hosted, linux, x64, wsl-linux]
+    permissions:
+      contents: read
+    environment: ${{ github.ref_name }}
+    steps:
+      - name: Access Environment Variables
+        run: echo "ejecucion variable ${{ vars.DB_HOST }}"
